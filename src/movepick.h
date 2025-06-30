@@ -26,6 +26,7 @@
 #include "stats.h"
 #include "tunable.h"
 #include <limits>
+#include <array>
 
 namespace stormphrax {
     struct KillerTable {
@@ -386,12 +387,41 @@ namespace stormphrax {
                 widened -= std::numeric_limits<i32>::min();
                 return static_cast<u64>(widened) << 32;
             };
-            u64 best = toU64(m_data.moves[m_idx].score) | 256 - m_idx;
-            for (auto i = m_idx + 1; i < m_end; ++i) {
-                const auto cur = toU64(m_data.moves[i].score) | (256 - i);
-                best = std::max(best, cur);
+            constexpr static auto UNROLL = 4;
+            std::array<u64, UNROLL> best;
+            best.fill(toU64(m_data.moves[m_idx].score) | 256 - m_idx);
+            constexpr static auto MASKS = [](){
+                std::array<std::array<u64, UNROLL>, UNROLL> res{};
+                for (usize i = 1; i < UNROLL; ++i) {
+                    res[i] = res[i - 1];
+                    res[i][i - 1] = 0xffffffffffffffff;
+                }
+                return res;
+            }();
+            auto idx = m_idx + 1;
+            const auto moves_ptr = &(m_data.moves[0]);
+            for (;idx + UNROLL <= m_end; idx += UNROLL) {
+                std::array<u64, UNROLL> cur{};
+                for (usize i = 0; i < UNROLL; ++i) {
+                    cur[i] = toU64(moves_ptr[idx + i].score) | (256 - (idx + i));
+                }
+                for (usize i = 0; i < UNROLL; ++i) {
+                    best[i] = std::max(best[i], cur[i]);
+                }
+                asm ("" : "+r"(idx)); // prevent the compiler from being a bit too smart and unrolling more than we asked it to
             }
-            const auto bestIdx = 256 - (best & 0xffffffff);
+            std::array<u64, UNROLL> cur{};
+            for (usize i = 0; i < UNROLL; ++i) {
+                cur[i] = (toU64(moves_ptr[idx + i].score) | (256 - (idx + i)));
+            }
+            const auto mask = MASKS[(m_end - m_idx - 1) % UNROLL];
+            for (usize i = 0; i < UNROLL; ++i) {
+                best[i] = std::max(best[i], cur[i] & mask[i]);
+            }
+            for (usize i = 1; i < UNROLL; ++i) {
+                best[0] = std::max(best[0], best[i]);
+            }
+            const auto bestIdx = 256 - (best[0] & 0xffffffff);
             if (bestIdx != m_idx) {
                 std::swap(m_data.moves[m_idx], m_data.moves[bestIdx]);
             }
