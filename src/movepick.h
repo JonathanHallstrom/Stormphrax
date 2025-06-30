@@ -399,11 +399,10 @@ namespace stormphrax {
                 return res;
             }();
             auto idx = m_idx + 1;
-            const auto moves_ptr = &(m_data.moves[0]);
             for (;idx + UNROLL <= m_end; idx += UNROLL) {
                 std::array<u64, UNROLL> cur{};
                 for (usize i = 0; i < UNROLL; ++i) {
-                    cur[i] = toU64(moves_ptr[idx + i].score) | (256 - (idx + i));
+                    cur[i] = toU64(m_data.moves[idx + i].score) | (256 - (idx + i));
                 }
                 for (usize i = 0; i < UNROLL; ++i) {
                     best[i] = std::max(best[i], cur[i]);
@@ -412,11 +411,16 @@ namespace stormphrax {
             }
             std::array<u64, UNROLL> cur{};
             for (usize i = 0; i < UNROLL; ++i) {
-                cur[i] = (toU64(moves_ptr[idx + i].score) | (256 - (idx + i)));
+                // we might read out of bounds here, but we'll have plenty of space after
+                // garbage data will be masked off
+                cur[i] = (toU64(m_data.moves.begin()[idx + i].score) | (256 - (idx + i)));
             }
             const auto mask = MASKS[(m_end - m_idx - 1) % UNROLL];
             for (usize i = 0; i < UNROLL; ++i) {
-                best[i] = std::max(best[i], cur[i] & mask[i]);
+                cur[i] &= mask[i]; // mask off the garbage data
+            }
+            for (usize i = 0; i < UNROLL; ++i) {
+                best[i] = std::max(best[i], cur[i]);
             }
             for (usize i = 1; i < UNROLL; ++i) {
                 best[0] = std::max(best[0], best[i]);
